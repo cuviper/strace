@@ -673,3 +673,16 @@ extern unsigned num_quals;
 /* Only ensures that sysent[scno] isn't out of range */
 #define SCNO_IN_RANGE(scno) \
 	((unsigned long)(scno) < nsyscalls)
+
+
+/* FIXME jistone: export hacks */
+struct tcb *pid2tcb(int pid);
+void print_signalled(struct tcb *tcp, const int pid, int status);
+void print_exited(struct tcb *tcp, const int pid, int status);
+void print_stopped(struct tcb *tcp, const siginfo_t *si, const unsigned int sig);
+void update_personality(struct tcb *tcp, unsigned int personality);
+struct tcb *alloctcb(int pid);
+void droptcb(struct tcb *tcp);
+void newoutf(struct tcb *tcp);
+int strace_child;
+struct tcb *current_tcp;

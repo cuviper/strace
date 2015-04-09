@@ -302,7 +302,7 @@ set_personality(int personality)
 # endif
 }
 
-static void
+void
 update_personality(struct tcb *tcp, unsigned int personality)
 {
 	if (personality == current_personality)
@@ -1192,6 +1192,9 @@ get_regset(pid_t pid)
 void
 get_regs(pid_t pid)
 {
+	// XXX
+	get_regs_error = 0;
+	return;
 #ifdef ARCH_REGS_FOR_GETREGSET
 # ifdef X86_64
 	/* Try PTRACE_GETREGSET first, fallback to PTRACE_GETREGS. */
