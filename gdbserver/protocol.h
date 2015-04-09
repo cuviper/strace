@@ -44,6 +44,12 @@ void gdb_end(struct gdb_conn *conn);
 
 void gdb_send(struct gdb_conn *conn, const char *command, size_t size);
 
-char *gdb_recv(struct gdb_conn *conn, size_t *size);
+char *gdb_recv(struct gdb_conn *conn, /* out */ size_t *size);
 
 bool gdb_start_noack(struct gdb_conn *conn);
+
+/* Read complete qXfer data, returned as binary with the size.
+ * On error, returns NULL with size set to the error code.  */
+char *gdb_xfer_read(struct gdb_conn *conn,
+        const char *object, const char *annex,
+        /* out */ size_t *size);

@@ -420,16 +420,12 @@ gdb_trace()
                         break;
                 case gdb_stop_signal:
                         {
-                                static const char cmd[] = "qXfer:siginfo:read::0,fff";
-                                gdb_send(gdb, cmd, sizeof(cmd) - 1);
-
                                 siginfo_t *si = NULL;
                                 size_t siginfo_size;
-                                char *siginfo_reply = gdb_recv(gdb, &siginfo_size);
-                                if (siginfo_size == sizeof(siginfo_t) + 1
-                                                && siginfo_reply[0] == 'l') {
-                                        si = (siginfo_t *) &siginfo_reply[1];
-                                }
+                                char *siginfo_reply =
+                                        gdb_xfer_read(gdb, "siginfo", "", &siginfo_size);
+                                if (siginfo_reply && siginfo_size == sizeof(siginfo_t))
+                                        si = (siginfo_t *) siginfo_reply;
 
                                 // XXX gdbserver returns "native" siginfo of 32/64-bit target
                                 // but strace expects its own format as PTRACE_GETSIGINFO

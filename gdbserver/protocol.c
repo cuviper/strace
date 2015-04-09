@@ -27,6 +27,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#define _GNU_SOURCE 1
 #include <ctype.h>
 #include <err.h>
 #include <stdbool.h>
@@ -337,4 +338,53 @@ gdb_start_noack(struct gdb_conn *conn)
     if (ok)
         conn->ack = false;
     return ok ? "OK" : "";
+}
+
+/* Read complete qXfer data, returned as binary with the size.
+ * On error, returns NULL with size set to the error code.  */
+char *
+gdb_xfer_read(struct gdb_conn *conn,
+        const char *object, const char *annex,
+        /* out */ size_t *ret_size)
+{
+    size_t error = 0;
+    size_t offset = 0;
+    char *data = NULL;
+    do {
+        char *cmd;
+        int cmd_size = asprintf(&cmd, "qXfer:%s:read:%s:%zx,%x",
+                object ?: "", annex ?: "", offset, 0xfff /* XXX PacketSize */);
+        if (cmd_size < 0) {
+            break;
+        }
+
+        gdb_send(conn, cmd, strlen(cmd));
+        free(cmd);
+
+        size_t size;
+        char *reply = gdb_recv(conn, &size);
+        char c = reply[0];
+        switch (c) {
+            case 'm':
+            case 'l':
+                data = realloc(data, offset + size - 1);
+                memcpy(data + offset, reply + 1, size - 1);
+                free(reply);
+                offset += size - 1;
+                if (c == 'l') {
+                    *ret_size = offset;
+                    return data;
+                }
+                continue;
+            case 'E':
+                error = gdb_decode_hex_str(reply + 1);
+                break;
+        }
+        free(reply);
+        break;
+    } while (0);
+
+    free(data);
+    *ret_size = error;
+    return NULL;
 }
