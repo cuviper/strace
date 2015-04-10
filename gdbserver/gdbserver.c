@@ -433,10 +433,8 @@ gdb_trace()
                                 // (i.e. need to reverse siginfo_fixup)
                                 // ((i.e. siginfo_from_compat_siginfo))
 
-                                // TODO need to translate gdb's signal numbers...
-                                // (but the real one shows in the siginfo for now, anyway)
                                 gdb_sig = stop.code;
-                                print_stopped(tcp, si, gdb_sig);
+                                print_stopped(tcp, si, linux_gdb_signal_to_target(gdb_sig));
                                 free(siginfo_reply);
                         }
                         break;
@@ -448,7 +446,8 @@ gdb_trace()
 
                 case gdb_stop_terminated:
                         // TODO need to translate gdb's signal numbers...
-                        print_signalled(tcp, tid, W_EXITCODE(0, stop.code));
+                        print_signalled(tcp, tid, W_EXITCODE(0,
+                                        linux_gdb_signal_to_target(stop.code)));
                         droptcb(tcp);
                         break;
         }

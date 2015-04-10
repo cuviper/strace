@@ -55,4 +55,7 @@ enum gdb_signal
 #undef SET
   };
 
+enum gdb_signal linux_gdb_signal_from_target (int signal);
+int linux_gdb_signal_to_target (enum gdb_signal signal);
+
 #endif /* #ifndef GDB_SIGNALS_H */

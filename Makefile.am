@@ -134,7 +134,8 @@ strace_SOURCES =	\
 # jistone
 strace_SOURCES +=		\
 	gdbserver/gdbserver.c	\
-	gdbserver/protocol.c
+	gdbserver/protocol.c	\
+	gdbserver/signals.c
 
 if USE_LIBUNWIND
 strace_SOURCES += unwind.c
