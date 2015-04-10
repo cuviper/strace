@@ -38,3 +38,4 @@ void gdb_detach(struct tcb *tcp);
 void gdb_startup_child(char **argv);
 void gdb_startup_attach(struct tcb *tcp);
 bool gdb_trace(void);
+char *gdb_get_regs(pid_t tid, size_t *size);

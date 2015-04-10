@@ -39,6 +39,7 @@
 
 #include "regs.h"
 #include "ptrace.h"
+#include "gdbserver.h"
 
 #if defined(SPARC64)
 # undef PTRACE_GETREGS
@@ -1192,9 +1193,7 @@ get_regset(pid_t pid)
 void
 get_regs(pid_t pid)
 {
-	// XXX
-	get_regs_error = 0;
-	return;
+#include "gdb_get_regs.c"
 #ifdef ARCH_REGS_FOR_GETREGSET
 # ifdef X86_64
 	/* Try PTRACE_GETREGSET first, fallback to PTRACE_GETREGS. */

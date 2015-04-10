@@ -541,3 +541,15 @@ gdb_trace()
         }
         return true;
 }
+
+char *
+gdb_get_regs(pid_t tid, size_t *size)
+{
+        if (!gdb)
+                return NULL;
+
+        /* NB: this assumes gdbserver's current thread is also tid.  If that
+         * may not be the case, we should send "HgTID" first, and restore.  */
+        gdb_send(gdb, "g", 1);
+        return gdb_recv(gdb, size);
+}
