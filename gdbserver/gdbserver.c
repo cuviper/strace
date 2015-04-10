@@ -39,6 +39,15 @@
 char* gdbserver = NULL;
 static struct gdb_conn* gdb = NULL;
 
+static const char * const gdb_signal_names[] = {
+#define SET(symbol, constant, name, string) \
+        [constant] = name,
+#include "signals.def"
+#undef SET
+};
+
+static int gdb_signal_map[SUPPORTED_PERSONALITIES][GDB_SIGNAL_LAST];
+
 enum gdb_stop {
         gdb_stop_unknown, // O or F or anything else
         gdb_stop_error, // E
@@ -62,6 +71,70 @@ struct gdb_stop_reply {
         int pid; // process id, aka kernel tgid
         int tid; // thread id, aka kernel tid
 };
+
+static int
+gdb_map_signal(unsigned int gdb_sig) {
+        /* strace "SIG_0" vs. gdb "0" -- it's all zero */
+        if (gdb_sig == GDB_SIGNAL_0)
+                return 0;
+
+        /* real-time signals are "special", not even fully contiguous */
+        if (gdb_sig == GDB_SIGNAL_REALTIME_32)
+                return 32;
+        if (GDB_SIGNAL_REALTIME_33 <= gdb_sig &&
+                        gdb_sig <= GDB_SIGNAL_REALTIME_63)
+                return gdb_sig - GDB_SIGNAL_REALTIME_33 + 33;
+        if (GDB_SIGNAL_REALTIME_64 <= gdb_sig &&
+                        gdb_sig <= GDB_SIGNAL_REALTIME_127)
+                return gdb_sig - GDB_SIGNAL_REALTIME_64 + 64;
+
+        const char *gdb_signame = gdb_signal_names[gdb_sig];
+        if (!gdb_signame)
+                return -1;
+
+        /* many of the other signals line up, but not all. */
+        if (gdb_sig < nsignals && !strcmp(gdb_signame, signame(gdb_sig)))
+                return gdb_sig;
+
+        /* scan the rest for a match */
+        unsigned int sig;
+        for (sig = 1; sig < nsignals; ++sig) {
+                if (sig == gdb_sig)
+                        continue;
+                if (!strcmp(gdb_signame, signame(sig)))
+                        return sig;
+        }
+
+        return -1;
+}
+
+static void
+gdb_signal_map_init()
+{
+	unsigned int pers, old_pers = current_personality;
+
+	for (pers = 0; pers < SUPPORTED_PERSONALITIES; ++pers) {
+		if (current_personality != pers)
+			set_personality(pers);
+
+                unsigned int gdb_sig;
+                int *map = gdb_signal_map[pers];
+                for (gdb_sig = 0; gdb_sig < GDB_SIGNAL_LAST; ++gdb_sig)
+                        map[gdb_sig] = gdb_map_signal(gdb_sig);
+	}
+
+	if (old_pers != current_personality)
+		set_personality(old_pers);
+}
+
+static int
+gdb_signal_to_target(struct tcb *tcp, unsigned int signal)
+{
+        unsigned int pers = tcp->currpers;
+        if (pers < SUPPORTED_PERSONALITIES && signal < GDB_SIGNAL_LAST)
+                return gdb_signal_map[pers][signal];
+        return -1;
+}
 
 static void
 gdb_recv_signal(struct gdb_stop_reply *stop)
@@ -188,6 +261,8 @@ gdb_ok()
 void
 gdb_init()
 {
+        gdb_signal_map_init();
+
         // FIXME error checking...
         const char *addr = strtok(gdbserver, ":");
         uint16_t port = atoi(strtok(NULL, ""));
@@ -434,7 +509,7 @@ gdb_trace()
                                 // ((i.e. siginfo_from_compat_siginfo))
 
                                 gdb_sig = stop.code;
-                                print_stopped(tcp, si, linux_gdb_signal_to_target(gdb_sig));
+                                print_stopped(tcp, si, gdb_signal_to_target(tcp, gdb_sig));
                                 free(siginfo_reply);
                         }
                         break;
@@ -445,9 +520,8 @@ gdb_trace()
                         break;
 
                 case gdb_stop_terminated:
-                        // TODO need to translate gdb's signal numbers...
                         print_signalled(tcp, tid, W_EXITCODE(0,
-                                        linux_gdb_signal_to_target(stop.code)));
+                                        gdb_signal_to_target(tcp, stop.code)));
                         droptcb(tcp);
                         break;
         }
