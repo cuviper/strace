@@ -208,7 +208,7 @@ gdb_send(struct gdb_conn *conn, const char *command, size_t size)
             break;
 
         // look for '+' ACK or '-' NACK/resend
-        acked = fgetc(conn->in) == '+';
+        acked = fgetc_unlocked(conn->in) == '+';
     } while (!acked);
 }
 
@@ -227,9 +227,9 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
     bool escape = false;
 
     // fast-forward to the first start of packet
-    while ((c = fgetc(in)) != EOF && c != '$');
+    while ((c = fgetc_unlocked(in)) != EOF && c != '$');
 
-    while ((c = fgetc(in)) != EOF) {
+    while ((c = fgetc_unlocked(in)) != EOF) {
         sum += (uint8_t)c;
         switch (c) {
             case '$': // new packet?  start over...
@@ -241,8 +241,8 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
             case '#': // end of packet
                 sum -= c; // not part of the checksum
                 {
-                    uint8_t msb = fgetc(in);
-                    uint8_t lsb = fgetc(in);
+                    uint8_t msb = fgetc_unlocked(in);
+                    uint8_t lsb = fgetc_unlocked(in);
                     *ret_sum_ok = sum == gdb_decode_hex(msb, lsb);
                 }
                 *ret_size = i;
@@ -268,7 +268,7 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
                 // The count character can't be >126 or '$'/'#' packet markers.
 
                 if (i > 0) { // need something to repeat!
-                    int c2 = fgetc(in);
+                    int c2 = fgetc_unlocked(in);
                     if (c2 < 29 || c2 > 126 || c2 == '$' || c2 == '#') {
                         // invalid count character!
                         ungetc(c2, in);
