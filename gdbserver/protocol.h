@@ -37,6 +37,7 @@ void gdb_encode_hex(uint8_t byte, char *out);
 uint16_t gdb_decode_hex(char msb, char lsb);
 uint64_t gdb_decode_hex_n(const char *bytes, size_t n);
 uint64_t gdb_decode_hex_str(const char *bytes);
+int gdb_decode_hex_buf(const char *bytes, size_t n, char *out);
 
 struct gdb_conn *gdb_begin_inet(const char *addr, uint16_t port);
 

@@ -147,7 +147,7 @@ gdb_recv_signal(struct gdb_stop_reply *stop)
 
         // tokenize the n:r pairs
         char *info = strdupa(reply + 3);
-        char *savetok, *nr;
+        char *savetok = NULL, *nr;
         for (nr = strtok_r(info, ";", &savetok); nr;
                         nr = strtok_r(NULL, ";", &savetok)) {
                 char *n = strtok(nr, ":");
@@ -533,7 +533,7 @@ gdb_trace()
                 // send the signal to this target and continue everyone else
                 char cmd[] = "vCont;Cxx:xxxxxxxx;c";
                 sprintf(cmd, "vCont;C%02x:%x;c", gdb_sig, tid);
-                gdb_send(gdb, cmd, sizeof(cmd) - 1);
+                gdb_send(gdb, cmd, strlen(cmd));
         } else {
                 // just continue everyone
                 static const char cmd[] = "vCont;c";
@@ -552,4 +552,40 @@ gdb_get_regs(pid_t tid, size_t *size)
          * may not be the case, we should send "HgTID" first, and restore.  */
         gdb_send(gdb, "g", 1);
         return gdb_recv(gdb, size);
+}
+
+int
+gdb_read_mem(pid_t tid, long addr, unsigned int len, bool check_nil, char *out)
+{
+        if (!gdb) {
+                errno = EINVAL;
+                return -1;
+        }
+
+        /* NB: this assumes gdbserver's current thread is also tid.  If that
+         * may not be the case, we should send "HgTID" first, and restore.  */
+        while (len) {
+                char cmd[] = "mxxxxxxxxxxxxxxxx,xxxx";
+                unsigned int chunk_len = len < 0x1000 ? len : 0x1000;
+                sprintf(cmd, "m%lx,%x", addr, chunk_len);
+                gdb_send(gdb, cmd, strlen(cmd));
+
+                size_t size;
+                char *reply = gdb_recv(gdb, &size);
+                if (size < 2 || reply[0] == 'E' || size > len * 2
+                                || gdb_decode_hex_buf(reply, size, out)) {
+                        errno = EINVAL;
+                        return -1;
+                }
+
+                chunk_len = size / 2;
+                if (check_nil && strnlen(out, chunk_len) < chunk_len)
+                        return 1;
+
+                addr += chunk_len;
+                out += chunk_len;
+                len -= chunk_len;
+        }
+
+        return 0;
 }

@@ -96,6 +96,19 @@ uint64_t gdb_decode_hex_str(const char *bytes)
     return value;
 }
 
+int gdb_decode_hex_buf(const char *bytes, size_t n, char *out)
+{
+    if (n & 1)
+        return -1;
+
+    while (n > 1) {
+        *out++ = gdb_decode_hex(bytes[0], bytes[1]);
+        bytes += 2;
+        n -= 2;
+    }
+    return 0;
+}
+
 
 static struct gdb_conn *
 gdb_begin(int fd)

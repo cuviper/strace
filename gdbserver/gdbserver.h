@@ -39,3 +39,4 @@ void gdb_startup_child(char **argv);
 void gdb_startup_attach(struct tcb *tcp);
 bool gdb_trace(void);
 char *gdb_get_regs(pid_t tid, size_t *size);
+int gdb_read_mem(pid_t tid, long addr, unsigned int len, bool check_nil, char *out);
