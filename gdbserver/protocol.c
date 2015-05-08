@@ -28,7 +28,6 @@
  */
 
 #define _GNU_SOURCE 1
-#include <ctype.h>
 #include <err.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -54,26 +53,35 @@ struct gdb_conn {
 };
 
 
-static char
-nibble_hex(uint8_t nibble)
-{
-    return nibble < 10 ? nibble + '0' : nibble - 10 + 'a';
-}
-
 void gdb_encode_hex(uint8_t byte, char* out) {
-    *out++ = nibble_hex(byte >> 4);
-    *out++ = nibble_hex(byte & 0xf);
+    static const char value_hex[16] = {
+        '0', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+    };
+    *out++ = value_hex[byte >> 4];
+    *out++ = value_hex[byte & 0xf];
 }
 
-static uint8_t
+static inline uint8_t
 hex_nibble(uint8_t hex)
 {
-    return isdigit(hex) ? hex - '0' : tolower(hex) - 'a' + 10;
+    static const uint8_t hex_value[256] = {
+        [0 ... '0'-1] = UINT8_MAX,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+        ['9'+1 ... 'A'-1] = UINT8_MAX,
+        10, 11, 12, 13, 14, 15,
+        ['F'+1 ... 'a'-1] = UINT8_MAX,
+        10, 11, 12, 13, 14, 15,
+        ['f'+1 ... 255] = UINT8_MAX,
+    };
+    return hex_value[hex];
 }
 
 uint16_t gdb_decode_hex(char msb, char lsb)
 {
-    if (!isxdigit(msb) || !isxdigit(lsb))
+    uint8_t high_nibble = hex_nibble(msb);
+    uint8_t low_nibble = hex_nibble(lsb);
+    if (high_nibble >= 16 || low_nibble >= 16)
         return UINT16_MAX;
     return 16 * hex_nibble(msb) + hex_nibble(lsb);
 }
@@ -82,7 +90,9 @@ uint64_t gdb_decode_hex_n(const char *bytes, size_t n)
 {
     uint64_t value = 0;
     while (n--) {
-        uint8_t nibble = isxdigit(*bytes) ? hex_nibble(*bytes++) : 0;
+        uint8_t nibble = hex_nibble(*bytes++);
+        if (nibble >= 16)
+            break;
         value = 16 * value + nibble;
     }
     return value;
@@ -91,8 +101,12 @@ uint64_t gdb_decode_hex_n(const char *bytes, size_t n)
 uint64_t gdb_decode_hex_str(const char *bytes)
 {
     uint64_t value = 0;
-    while (isxdigit(*bytes))
-        value = 16 * value + hex_nibble(*bytes++);
+    while (*bytes) {
+        uint8_t nibble = hex_nibble(*bytes++);
+        if (nibble >= 16)
+            break;
+        value = 16 * value + nibble;
+    }
     return value;
 }
 
@@ -102,7 +116,11 @@ int gdb_decode_hex_buf(const char *bytes, size_t n, char *out)
         return -1;
 
     while (n > 1) {
-        *out++ = gdb_decode_hex(bytes[0], bytes[1]);
+        uint16_t byte = gdb_decode_hex(bytes[0], bytes[1]);
+        if (byte > UINT8_MAX)
+            return -1;
+
+        *out++ = byte;
         bytes += 2;
         n -= 2;
     }

@@ -573,7 +573,7 @@ gdb_read_mem(pid_t tid, long addr, unsigned int len, bool check_nil, char *out)
                 size_t size;
                 char *reply = gdb_recv(gdb, &size);
                 if (size < 2 || reply[0] == 'E' || size > len * 2
-                                || gdb_decode_hex_buf(reply, size, out)) {
+                    || gdb_decode_hex_buf(reply, size, out) < 0) {
                         errno = EINVAL;
                         return -1;
                 }
