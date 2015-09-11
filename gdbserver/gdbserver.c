@@ -487,12 +487,26 @@ gdb_trace()
                 case gdb_stop_trap:
                         // misc trap, nothing to do...
                         break;
+
                 case gdb_stop_syscall_entry:
-                case gdb_stop_syscall_return:
-                        // should we make sure TCB_INSYSCALL is consistent?
+                        // If we thought we were already in a syscall -- missed
+                        // a return? -- skipping this report doesn't do much
+                        // good.  Might as well force it to be a new entry
+                        // regardless to sync up.
+                        tcp->flags &= ~TCB_INSYSCALL;
                         tcp->scno = stop.code;
                         trace_syscall(tcp);
                         break;
+
+                case gdb_stop_syscall_return:
+                        // If we missed the entry, recording a return will only
+                        // confuse things, so let's just report the good ones.
+                        if (exiting(tcp)) {
+                                tcp->scno = stop.code;
+                                trace_syscall(tcp);
+                        }
+                        break;
+
                 case gdb_stop_signal:
                         {
                                 siginfo_t *si = NULL;
