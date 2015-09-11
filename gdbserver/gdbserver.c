@@ -264,9 +264,9 @@ gdb_init()
         gdb_signal_map_init();
 
         // FIXME error checking...
-        const char *addr = strtok(gdbserver, ":");
-        uint16_t port = atoi(strtok(NULL, ""));
-        gdb = gdb_begin_inet(addr, port);
+        const char *node = strtok(gdbserver, ":");
+        const char *service = strtok(NULL, "");
+        gdb = gdb_begin_tcp(node, service);
 
         if (!gdb_start_noack(gdb))
                 error_msg("couldn't enable gdb noack mode");

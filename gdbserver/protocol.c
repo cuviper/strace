@@ -29,6 +29,7 @@
 
 #define _GNU_SOURCE 1
 #include <err.h>
+#include <netdb.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -160,21 +161,35 @@ gdb_begin(int fd)
 }
 
 struct gdb_conn *
-gdb_begin_inet(const char *addr, uint16_t port)
+gdb_begin_tcp(const char *node, const char *service)
 {
-    // fill the socket information
-    struct sockaddr_in sa = {
-        .sin_family = AF_INET,
-        .sin_port = htons(port),
+    // NB: gdb doesn't support IPv6 - should we?
+    const struct addrinfo hints = {
+        .ai_family = AF_UNSPEC,
+        .ai_socktype = SOCK_STREAM,
     };
-    if (inet_aton(addr, &sa.sin_addr) == 0)
-        errx(1, "Invalid address: %s", addr);
 
-    // open the socket and start the tcp connection
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct addrinfo *result = NULL;
+    int s = getaddrinfo(node, service, &hints, &result);
+    if (s)
+        errx(1, "getaddrinfo: %s", gai_strerror(s));
+
+    int fd = -1;
+    for (struct addrinfo *ai = result; ai; ai = ai->ai_next) {
+        // open the socket and start the tcp connection
+        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0)
+            continue;
+
+        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0)
+            break;
+
+        close(fd);
+        fd = -1;
+    }
+
+    freeaddrinfo(result);
     if (fd < 0)
-        err(1, "socket");
-    if (connect(fd, (const struct sockaddr *)&sa, sizeof(sa)) != 0)
         err(1, "connect");
 
     // initialize the rest of gdb on this handle
