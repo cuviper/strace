@@ -142,8 +142,9 @@ gdb_recv_signal(struct gdb_stop_reply *stop)
         char *reply = stop->reply;
 
         stop->code = gdb_decode_hex_n(&reply[1], 2);
-        stop->type = stop->code == GDB_SIGNAL_TRAP ?
-                gdb_stop_trap : gdb_stop_signal;
+        stop->type = (stop->code == GDB_SIGNAL_TRAP ||
+                        stop->code == GDB_SIGNAL_0)
+                ? gdb_stop_trap : gdb_stop_signal;
 
         // tokenize the n:r pairs
         char *info = strdupa(reply + 3);
