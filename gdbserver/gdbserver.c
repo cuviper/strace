@@ -285,7 +285,11 @@ gdb_init()
         gdb_send(gdb, extended_cmd, sizeof(extended_cmd) - 1);
         if (!gdb_ok())
                 error_msg("couldn't enable gdb extended mode");
+}
 
+static void
+gdb_init_syscalls()
+{
         static const char syscall_cmd[] = "QCatchSyscalls:1";
         gdb_send(gdb, syscall_cmd, sizeof(syscall_cmd) - 1);
         if (!gdb_ok())
@@ -370,6 +374,7 @@ gdb_startup_child(char **argv)
 	struct tcb *tcp = alloctcb(tid);
         tcp->flags |= TCB_ATTACHED | TCB_STARTUP;
         newoutf(tcp);
+        gdb_init_syscalls();
 
         // TODO normal strace attaches right before exec, so the first syscall
         // seen is the execve with all its arguments.  Need to emulate that here?
@@ -410,6 +415,7 @@ gdb_startup_attach(struct tcb *tcp)
         }
         tcp->flags |= TCB_ATTACHED | TCB_STARTUP;
         newoutf(tcp);
+        gdb_init_syscalls();
 
         if (!qflag)
                 fprintf(stderr, "Process %u attached\n", tcp->pid);
@@ -459,6 +465,7 @@ gdb_trace()
                 tcp = alloctcb(tid);
 		tcp->flags |= TCB_ATTACHED | TCB_STARTUP;
 		newoutf(tcp);
+                gdb_init_syscalls();
 	}
 
         get_regs(tid);
