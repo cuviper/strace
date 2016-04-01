@@ -1,11 +1,7 @@
-/*
- * Copyright (c) 1991, 1992 Paul Kranenburg <pk@cs.few.eur.nl>
- * Copyright (c) 1993 Branko Lankester <branko@hacktic.nl>
- * Copyright (c) 1993, 1994, 1995, 1996 Rick Sladkey <jrs@world.std.com>
- * Copyright (c) 1996-1999 Wichert Akkerman <wichert@cistron.nl>
- * Copyright (c) 1999 IBM Deutschland Entwicklung GmbH, IBM Corporation
- *                     Linux for s390 port by D.J. Barrow
- *                    <barrow_dj@mail.yahoo.com,djbarrow@de.ibm.com>
+/* Interface of strace features over the GDB remote protocol.
+ *
+ * Copyright (c) 2015 Red Hat Inc.
+ * Copyright (c) 2015 Josh Stone <cuviper@gmail.com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,26 +27,16 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "defs.h"
-#include "ptrace.h"
-#include "gdbserver.h"
+#include "protocol.h"
 
-int
-upeek(int pid, long off, long *res)
-{
-	long val;
+char* gdbserver;
 
-	if (gdbserver)
-		return gdb_read_mem(pid, off, current_wordsize, false, (char*)res);
-
-	errno = 0;
-	val = ptrace(PTRACE_PEEKUSER, (pid_t) pid, (void *) off, 0);
-	if (val == -1 && errno) {
-		if (errno != ESRCH) {
-			perror_msg("upeek: PTRACE_PEEKUSER pid:%d @0x%lx)", pid, off);
-		}
-		return -1;
-	}
-	*res = val;
-	return 0;
-}
+void gdb_init(void);
+void gdb_finalize_init(void);
+void gdb_cleanup(void);
+void gdb_detach(struct tcb *tcp);
+void gdb_startup_child(char **argv);
+void gdb_startup_attach(struct tcb *tcp);
+bool gdb_trace(void);
+char *gdb_get_regs(pid_t tid, size_t *size);
+int gdb_read_mem(pid_t tid, long addr, unsigned int len, bool check_nil, char *out);

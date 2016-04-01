@@ -1,11 +1,7 @@
-/*
- * Copyright (c) 1991, 1992 Paul Kranenburg <pk@cs.few.eur.nl>
- * Copyright (c) 1993 Branko Lankester <branko@hacktic.nl>
- * Copyright (c) 1993, 1994, 1995, 1996 Rick Sladkey <jrs@world.std.com>
- * Copyright (c) 1996-1999 Wichert Akkerman <wichert@cistron.nl>
- * Copyright (c) 1999 IBM Deutschland Entwicklung GmbH, IBM Corporation
- *                     Linux for s390 port by D.J. Barrow
- *                    <barrow_dj@mail.yahoo.com,djbarrow@de.ibm.com>
+/* Simple interface of a GDB remote protocol client.
+ *
+ * Copyright (c) 2015 Red Hat Inc.
+ * Copyright (c) 2015 Josh Stone <cuviper@gmail.com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,26 +27,30 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "defs.h"
-#include "ptrace.h"
-#include "gdbserver.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
 
-int
-upeek(int pid, long off, long *res)
-{
-	long val;
+struct gdb_conn;
 
-	if (gdbserver)
-		return gdb_read_mem(pid, off, current_wordsize, false, (char*)res);
+void gdb_encode_hex(uint8_t byte, char *out);
+uint16_t gdb_decode_hex(char msb, char lsb);
+uint64_t gdb_decode_hex_n(const char *bytes, size_t n);
+uint64_t gdb_decode_hex_str(const char *bytes);
+int gdb_decode_hex_buf(const char *bytes, size_t n, char *out);
 
-	errno = 0;
-	val = ptrace(PTRACE_PEEKUSER, (pid_t) pid, (void *) off, 0);
-	if (val == -1 && errno) {
-		if (errno != ESRCH) {
-			perror_msg("upeek: PTRACE_PEEKUSER pid:%d @0x%lx)", pid, off);
-		}
-		return -1;
-	}
-	*res = val;
-	return 0;
-}
+struct gdb_conn *gdb_begin_tcp(const char *node, const char *service);
+
+void gdb_end(struct gdb_conn *conn);
+
+void gdb_send(struct gdb_conn *conn, const char *command, size_t size);
+
+char *gdb_recv(struct gdb_conn *conn, /* out */ size_t *size);
+
+bool gdb_start_noack(struct gdb_conn *conn);
+
+/* Read complete qXfer data, returned as binary with the size.
+ * On error, returns NULL with size set to the error code.  */
+char *gdb_xfer_read(struct gdb_conn *conn,
+        const char *object, const char *annex,
+        /* out */ size_t *size);

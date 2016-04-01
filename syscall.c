@@ -41,6 +41,7 @@
 
 #include "regs.h"
 #include "ptrace.h"
+#include "gdbserver.h"
 
 #if defined(SPARC64)
 # undef PTRACE_GETREGS
@@ -326,7 +327,7 @@ set_personality(int personality)
 # endif
 }
 
-static void
+void
 update_personality(struct tcb *tcp, unsigned int personality)
 {
 	if (personality == current_personality)
@@ -1244,6 +1245,7 @@ get_regset(pid_t pid)
 void
 get_regs(pid_t pid)
 {
+#include "gdb_get_regs.c"
 #undef USE_GET_SYSCALL_RESULT_REGS
 #ifdef ARCH_REGS_FOR_GETREGSET
 # ifdef X86_64
