@@ -3,6 +3,10 @@ This is strace, a system call tracer for Linux.
 strace is released under a Berkeley-style license at the request
 of Paul Kranenburg; see the file COPYING for details.
 
+The gdbserver feature of strace is released under the same license,
+except for a few sources copied from gdb which are required to use
+GPL version 3 or later.  See COPYING3 for details.
+
 See the file CREDITS for a list of authors and other contributors.
 
 See the file INSTALL for compilation and installation instructions.

@@ -172,3 +172,11 @@ extern long ptrace(int, int, char *, long);
 #if !HAVE_DECL_PTRACE_POKEUSER
 # define PTRACE_POKEUSER PTRACE_POKEUSR
 #endif
+
+// jistone hack FIXME
+static inline long do_not_use_ptrace_FIXME(enum __ptrace_request request, ...)
+{
+    errno = ENOSYS;
+    return -1;
+}
+#define ptrace(a,b,c,d) do_not_use_ptrace_FIXME(a,b,c,d)

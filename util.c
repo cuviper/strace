@@ -42,6 +42,7 @@
 
 #include "regs.h"
 #include "ptrace.h"
+#include "gdbserver.h"
 
 int
 string_to_uint(const char *str)
@@ -1031,6 +1032,9 @@ umoven(struct tcb *tcp, long addr, unsigned int len, void *our_addr)
 		char x[sizeof(long)];
 	} u;
 
+	if (gdbserver)
+		return gdb_read_mem(pid, addr, len, false, laddr);
+
 #if SUPPORTED_PERSONALITIES > 1 && SIZEOF_LONG > 4
 	if (current_wordsize < sizeof(addr))
 		addr &= (1ul << 8 * current_wordsize) - 1;
@@ -1205,6 +1209,9 @@ umovestr(struct tcb *tcp, long addr, unsigned int len, char *laddr)
 		unsigned long val;
 		char x[sizeof(long)];
 	} u;
+
+	if (gdbserver)
+		return gdb_read_mem(pid, addr, len, true, laddr);
 
 #if SUPPORTED_PERSONALITIES > 1 && SIZEOF_LONG > 4
 	if (current_wordsize < sizeof(addr))

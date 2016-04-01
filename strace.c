@@ -47,6 +47,8 @@
 #include "ptrace.h"
 #include "printsiginfo.h"
 
+#include "gdbserver.h"
+
 /* In some libc, these aren't declared. Do it ourself: */
 extern char **environ;
 extern int optind;
@@ -139,7 +141,7 @@ static bool skip_one_b_execve = 0;
 bool hide_log_until_execve = 0;
 
 static int exit_code = 0;
-static int strace_child = 0;
+int strace_child = 0;
 static int strace_tracer_pid = 0;
 
 static char *username = NULL;
@@ -155,7 +157,7 @@ static char *outfname = NULL;
 static FILE *shared_log;
 
 struct tcb *printing_tcp = NULL;
-static struct tcb *current_tcp;
+struct tcb *current_tcp;
 
 static struct tcb **tcbtab;
 static unsigned int nprocs, tcbtabsize;
@@ -677,7 +679,7 @@ tabto(void)
  * Otherwise, "strace -oFILE -ff -p<nonexistant_pid>"
  * may create bogus empty FILE.<nonexistant_pid>, and then die.
  */
-static void
+void
 newoutf(struct tcb *tcp)
 {
 	tcp->outf = shared_log; /* if not -ff mode, the same file is for all */
@@ -712,7 +714,7 @@ expand_tcbtab(void)
 		tcbtab[tcbtabsize++] = newtcbs++;
 }
 
-static struct tcb *
+struct tcb *
 alloctcb(int pid)
 {
 	unsigned int i;
@@ -745,7 +747,7 @@ alloctcb(int pid)
 	error_msg_and_die("bug in alloctcb");
 }
 
-static void
+void
 droptcb(struct tcb *tcp)
 {
 	if (tcp->pid == 0)
@@ -792,6 +794,11 @@ detach(struct tcb *tcp)
 {
 	int error;
 	int status;
+
+	if (gdbserver) {
+		gdb_detach(tcp);
+		goto drop;
+	}
 
 	/*
 	 * Linux wrongly insists the child be stopped
@@ -1022,6 +1029,10 @@ startup_attach(void)
 		if (tcp->flags & TCB_ATTACHED)
 			continue; /* no, we already attached it */
 
+		if (gdbserver) {
+			gdb_startup_attach(tcp);
+			continue;
+		}
 		if (tcp->pid == parent_pid || tcp->pid == strace_tracer_pid) {
 			errno = EPERM;
 			perror_msg("attach: %d", tcp->pid);
@@ -1210,6 +1221,11 @@ startup_child(char **argv)
 	char pathname[PATH_MAX];
 	int pid;
 	struct tcb *tcp;
+
+	if (gdbserver) {
+		gdb_startup_child(argv);
+		return;
+	}
 
 	filename = argv[0];
 	filename_len = strlen(filename);
@@ -1523,6 +1539,7 @@ init(int argc, char *argv[])
 		"k"
 #endif
 		"D"
+		"G:"
 		"a:e:o:O:p:s:S:u:E:P:I:")) != EOF) {
 		switch (c) {
 		case 'b':
@@ -1554,6 +1571,9 @@ init(int argc, char *argv[])
 			break;
 		case 'f':
 			followfork++;
+			break;
+		case 'G':
+			gdbserver = strdup(optarg);
 			break;
 		case 'h':
 			usage();
@@ -1653,7 +1673,8 @@ init(int argc, char *argv[])
 	memset(acolumn_spaces, ' ', acolumn);
 	acolumn_spaces[acolumn] = '\0';
 
-	if (!argv[0] && !nprocs) {
+	/* under gdbserver, we can reasonably allow having neither to use existing targets.  */
+	if (!argv[0] && !nprocs && !gdbserver) {
 		error_msg_and_help("must have PROG [ARGS] or -p PID");
 	}
 
@@ -1663,6 +1684,21 @@ init(int argc, char *argv[])
 
 	if (!followfork)
 		followfork = optF;
+
+	if (gdbserver) {
+	   if (username) {
+		   error_msg_and_die("-u and -G are mutually exclusive");
+	   }
+
+	   if (daemonized_tracer) {
+		   error_msg_and_die("-D and -G are mutually exclusive");
+	   }
+
+	   if (!followfork) {
+		   error_msg("-G is always multithreaded, implies -f");
+		   followfork = 1;
+	   }
+	}
 
 	if (followfork >= 2 && cflag) {
 		error_msg_and_help("(-c or -C) and -ff are mutually exclusive");
@@ -1688,6 +1724,9 @@ init(int argc, char *argv[])
 		if (show_fd_path)
 			error_msg("-%c has no effect with -c", 'y');
 	}
+
+	if (gdbserver)
+		gdb_init();
 
 #ifdef USE_LIBUNWIND
 	if (stack_trace_enabled)
@@ -1827,6 +1866,9 @@ init(int argc, char *argv[])
 	if (nprocs != 0 || daemonized_tracer)
 		startup_attach();
 
+	if (gdbserver)
+		gdb_finalize_init();
+
 	/* Do we want pids printed in our -o OUTFILE?
 	 * -ff: no (every pid has its own file); or
 	 * -f: yes (there can be more pids in the future); or
@@ -1835,7 +1877,7 @@ init(int argc, char *argv[])
 	print_pid_pfx = (outfname && followfork < 2 && (followfork == 1 || nprocs > 1));
 }
 
-static struct tcb *
+struct tcb *
 pid2tcb(int pid)
 {
 	unsigned int i;
@@ -1878,6 +1920,8 @@ cleanup(void)
 	}
 	if (cflag)
 		call_summary(shared_log);
+
+	gdb_cleanup();
 }
 
 static void
@@ -2016,7 +2060,7 @@ maybe_switch_tcbs(struct tcb *tcp, const int pid)
 	return tcp;
 }
 
-static void
+void
 print_signalled(struct tcb *tcp, const int pid, int status)
 {
 	if (pid == strace_child) {
@@ -2040,7 +2084,7 @@ print_signalled(struct tcb *tcp, const int pid, int status)
 	}
 }
 
-static void
+void
 print_exited(struct tcb *tcp, const int pid, int status)
 {
 	if (pid == strace_child) {
@@ -2056,7 +2100,7 @@ print_exited(struct tcb *tcp, const int pid, int status)
 	}
 }
 
-static void
+void
 print_stopped(struct tcb *tcp, const siginfo_t *si, const unsigned int sig)
 {
 	if (cflag != CFLAG_ONLY_STATS
@@ -2110,6 +2154,9 @@ trace(void)
 
 	if (interrupted)
 		return false;
+
+	if (gdbserver)
+		return gdb_trace();
 
 	/*
 	 * Used to exit simply when nprocs hits zero, but in this testcase:

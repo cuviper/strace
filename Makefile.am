@@ -46,12 +46,18 @@ ARCH		= @arch@
 
 ACLOCAL_AMFLAGS = -I m4
 AM_CFLAGS = $(WARN_CFLAGS)
-AM_CPPFLAGS = -I$(builddir)/$(OS)/$(ARCH) \
+OS_CPPFLAGS = -I$(builddir)/$(OS)/$(ARCH) \
 	      -I$(srcdir)/$(OS)/$(ARCH) \
 	      -I$(builddir)/$(OS) \
 	      -I$(srcdir)/$(OS) \
 	      -I$(builddir) \
 	      -I$(srcdir)
+
+# jistone
+AM_CPPFLAGS = -I$(builddir)/gdbserver/$(ARCH) \
+	      -I$(srcdir)/gdbserver/$(ARCH) \
+	      -I$(builddir)/gdbserver \
+	      -I$(srcdir)/gdbserver $(OS_CPPFLAGS)
 
 include xlat/Makemodule.am
 
@@ -215,6 +221,11 @@ strace_SOURCES =	\
 	xattr.c		\
 	xmalloc.c	\
 	# end of strace_SOURCES
+
+# jistone
+strace_SOURCES +=		\
+	gdbserver/gdbserver.c	\
+	gdbserver/protocol.c
 
 if USE_LIBUNWIND
 strace_SOURCES += unwind.c
