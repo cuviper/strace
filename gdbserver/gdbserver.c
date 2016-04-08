@@ -49,6 +49,9 @@ int strace_child;
 
 char* gdbserver = NULL;
 static struct gdb_conn* gdb = NULL;
+static bool gdb_extended = false;
+static bool gdb_multiprocess = false;
+static bool gdb_vcont = false;
 
 static const char * const gdb_signal_names[] = {
 #define SET(symbol, constant, name, string) \
@@ -148,6 +151,29 @@ gdb_signal_to_target(struct tcb *tcp, unsigned int signal)
 }
 
 static void
+gdb_parse_thread(const char *id, int *pid, int *tid)
+{
+        if (*id == 'p') {
+                // pPID or pPID.TID
+                ++id;
+                *pid = gdb_decode_hex_str(id);
+
+                // stop messages should always have the TID,
+                // but if not, just use the PID.
+                char *dot = strchr(id, '.');
+                if (!dot) {
+                        *tid = *pid;
+                } else {
+                        *tid = gdb_decode_hex_str(dot + 1);
+                }
+        } else {
+                // just TID, assume same PID
+                *tid = gdb_decode_hex_str(id);
+                *pid = *tid;
+        }
+}
+
+static void
 gdb_recv_signal(struct gdb_stop_reply *stop)
 {
         char *reply = stop->reply;
@@ -168,24 +194,7 @@ gdb_recv_signal(struct gdb_stop_reply *stop)
                         continue;
 
                 if (!strcmp(n, "thread")) {
-                        if (*r == 'p') {
-                                // pPID or pPID.TID
-                                ++r;
-                                stop->pid = gdb_decode_hex_str(r);
-
-                                // stop messages should always have the TID,
-                                // but if not, just use the PID.
-                                char *dot = strchr(r, '.');
-                                if (!dot) {
-                                        stop->tid = stop->pid;
-                                } else {
-                                        stop->tid = gdb_decode_hex_str(dot + 1);
-                                }
-                        } else {
-                                // just TID, assume same PID
-                                stop->tid = gdb_decode_hex_str(r);
-                                stop->pid = stop->tid;
-                        }
+                        gdb_parse_thread(r, &stop->pid, &stop->tid);
                 }
                 else if (!strcmp(n, "syscall_entry")) {
                         if (stop->type == gdb_stop_trap) {
@@ -292,14 +301,24 @@ gdb_init()
 
         size_t size;
         char *reply = gdb_recv(gdb, &size);
-        if (!strstr(reply, "multiprocess+"))
+        gdb_multiprocess = strstr(reply, "multiprocess+") != NULL;
+        if (!gdb_multiprocess)
                 error_msg("couldn't enable gdb multiprocess mode");
         free(reply);
 
         static const char extended_cmd[] = "!";
         gdb_send(gdb, extended_cmd, sizeof(extended_cmd) - 1);
-        if (!gdb_ok())
+        gdb_extended = gdb_ok();
+        if (!gdb_extended)
                 error_msg("couldn't enable gdb extended mode");
+
+        static const char vcont_cmd[] = "vCont?";
+        gdb_send(gdb, vcont_cmd, sizeof(vcont_cmd) - 1);
+        reply = gdb_recv(gdb, &size);
+        gdb_vcont = strncmp(reply, "vCont", 5) == 0;
+        if (!gdb_vcont)
+                error_msg("gdb server doesn't support vCont");
+        free(reply);
 }
 
 static void
@@ -311,22 +330,74 @@ gdb_init_syscalls()
                 error_msg("couldn't enable gdb syscall catching");
 }
 
+static struct tcb*
+gdb_find_thread(int tid)
+{
+        if (tid < 0)
+                return NULL;
+
+        /* Look up 'tid' in our table. */
+        struct tcb *tcp = pid2tcb(tid);
+        if (!tcp) {
+                tcp = alloctcb(tid);
+                tcp->flags |= TCB_ATTACHED | TCB_STARTUP;
+                newoutf(tcp);
+                gdb_init_syscalls();
+        }
+        return tcp;
+}
+
+static void
+gdb_enumerate_threads()
+{
+        // qfThreadInfo [qsThreadInfo]...
+        // -> m thread
+        // -> m thread,thread
+        // -> l (finished)
+
+        static const char qfcmd[] = "qfThreadInfo";
+
+        gdb_send(gdb, qfcmd, sizeof(qfcmd) - 1);
+
+        size_t size;
+        char *reply = gdb_recv(gdb, &size);
+        while (reply[0] == 'm') {
+                for (char *thread = strtok(reply + 1, ","); thread;
+                                thread = strtok(NULL, "")) {
+                        int pid, tid;
+                        gdb_parse_thread(thread, &pid, &tid);
+
+                        struct tcb *tcp = gdb_find_thread(tid);
+                        if (tcp && !current_tcp)
+                                current_tcp = tcp;
+                }
+
+                free(reply);
+
+                static const char qscmd[] = "qsThreadInfo";
+                gdb_send(gdb, qscmd, sizeof(qscmd) - 1);
+                reply = gdb_recv(gdb, &size);
+        }
+
+        free(reply);
+}
+
 void
 gdb_finalize_init()
 {
-        // TODO Should we enumerate all attached threads to be sure?
-        // Especially since we get all threads on vAttach, not just the one pid.
-        // qfThreadInfo [qsThreadInfo]...
-        // or qXfer:threads:read::offset,length
-
-        // XXX valgrind doesn't support vCont, which can be determined by an
-        // empty reply from probing "vCont?" at startup.  It likewise doesn't
-        // report multiprocess in qSupported.  Use plain c/Cxx in that case.
+        // We enumerate all attached threads to be sure, especially since we
+        // get all threads on vAttach, not just the one pid.
+        gdb_enumerate_threads();
 
         // Everything was stopped from startup_child/startup_attach,
         // now continue them all so the next reply will be a stop packet
-        static const char cmd[] = "vCont;c";
-        gdb_send(gdb, cmd, sizeof(cmd) - 1);
+        if (gdb_vcont) {
+                static const char cmd[] = "vCont;c";
+                gdb_send(gdb, cmd, sizeof(cmd) - 1);
+        } else {
+                static const char cmd[] = "c";
+                gdb_send(gdb, cmd, sizeof(cmd) - 1);
+        }
 }
 
 void
@@ -342,6 +413,9 @@ gdb_startup_child(char **argv)
 {
         if (!gdb)
                 error_msg_and_die("gdb server not connected!");
+
+        if (!gdb_extended)
+                error_msg_and_die("gdb server doesn't support starting processes!");
 
         size_t i;
         size_t size = 4; // vRun
@@ -399,6 +473,12 @@ gdb_startup_child(char **argv)
 void
 gdb_startup_attach(struct tcb *tcp)
 {
+        if (!gdb)
+                error_msg_and_die("gdb server not connected!");
+
+        if (!gdb_extended)
+                error_msg_and_die("gdb server doesn't support attaching processes!");
+
         char cmd[] = "vAttach;XXXXXXXX";
         sprintf(cmd, "vAttach;%x", tcp->pid);
         gdb_send(gdb, cmd, strlen(cmd));
@@ -439,9 +519,14 @@ gdb_startup_attach(struct tcb *tcp)
 void
 gdb_detach(struct tcb *tcp)
 {
-        char cmd[] = "D;XXXXXXXX";
-        sprintf(cmd, "D;%x", tcp->pid);
-        gdb_send(gdb, cmd, strlen(cmd));
+        if (gdb_multiprocess) {
+                char cmd[] = "D;XXXXXXXX";
+                sprintf(cmd, "D;%x", tcp->pid);
+                gdb_send(gdb, cmd, strlen(cmd));
+        } else {
+                static const char cmd[] = "D";
+                gdb_send(gdb, cmd, sizeof(cmd) - 1);
+        }
 
         if (!gdb_ok())
                 error_msg("gdb server failed to detach %d", tcp->pid);
@@ -469,26 +554,51 @@ gdb_trace()
                         break;
         }
 
-        pid_t tid = stop.tid;
-        if (tid < 0)
+        pid_t tid = -1;
+	struct tcb *tcp;
+
+        if (gdb_multiprocess) {
+                tid = stop.tid;
+                tcp = gdb_find_thread(tid);
+
+                /* Set current output file */
+                current_tcp = tcp;
+        } else if (current_tcp) {
+                tcp = current_tcp;
+                tid = tcp->pid;
+        }
+
+        if (tid < 0 || tcp == NULL)
                 error_msg_and_die("couldn't read tid from stop reply: %.*s",
                                 (int)stop.size, stop.reply);
 
-	/* Look up 'tid' in our table. */
-	struct tcb *tcp = pid2tcb(tid);
-	if (!tcp) {
-                tcp = alloctcb(tid);
-		tcp->flags |= TCB_ATTACHED | TCB_STARTUP;
-		newoutf(tcp);
-                gdb_init_syscalls();
-	}
+        bool exited = false;
+        switch (stop.type) {
+                case gdb_stop_exited:
+                        print_exited(tcp, tid, W_EXITCODE(stop.code, 0));
+                        droptcb(tcp);
+                        exited = true;
+                        break;
+
+                case gdb_stop_terminated:
+                        print_signalled(tcp, tid, W_EXITCODE(0,
+                                        gdb_signal_to_target(tcp, stop.code)));
+                        droptcb(tcp);
+                        exited = true;
+                        break;
+
+                default:
+                        break;
+        }
+
+        if (exited && !gdb_multiprocess) {
+                free(stop.reply);
+                return false;
+        }
 
         get_regs(tid);
 
         // TODO need code equivalent to PTRACE_EVENT_EXEC?
-
-	/* Set current output file */
-	current_tcp = tcp;
 
         /* Is this the very first time we see this tracee stopped? */
         if (tcp->flags & TCB_STARTUP) {
@@ -504,6 +614,8 @@ gdb_trace()
         switch (stop.type) {
                 case gdb_stop_unknown:
                 case gdb_stop_error:
+                case gdb_stop_exited:
+                case gdb_stop_terminated:
                         // already handled above
                         break;
 
@@ -550,31 +662,31 @@ gdb_trace()
                                 free(siginfo_reply);
                         }
                         break;
-
-                case gdb_stop_exited:
-                        print_exited(tcp, tid, W_EXITCODE(stop.code, 0));
-                        droptcb(tcp);
-                        break;
-
-                case gdb_stop_terminated:
-                        print_signalled(tcp, tid, W_EXITCODE(0,
-                                        gdb_signal_to_target(tcp, stop.code)));
-                        droptcb(tcp);
-                        break;
         }
 
         free(stop.reply);
 
-        // XXX valgrind doesn't support vCont, see gdb_finalize_init.
         if (gdb_sig) {
-                // send the signal to this target and continue everyone else
-                char cmd[] = "vCont;Cxx:xxxxxxxx;c";
-                sprintf(cmd, "vCont;C%02x:%x;c", gdb_sig, tid);
-                gdb_send(gdb, cmd, strlen(cmd));
+                if (gdb_vcont) {
+                        // send the signal to this target and continue everyone else
+                        char cmd[] = "vCont;Cxx:xxxxxxxx;c";
+                        sprintf(cmd, "vCont;C%02x:%x;c", gdb_sig, tid);
+                        gdb_send(gdb, cmd, strlen(cmd));
+                } else {
+                        // just send the signal
+                        char cmd[] = "Cxx";
+                        sprintf(cmd, "C%02x", gdb_sig);
+                        gdb_send(gdb, cmd, strlen(cmd));
+                }
         } else {
                 // just continue everyone
-                static const char cmd[] = "vCont;c";
-                gdb_send(gdb, cmd, sizeof(cmd) - 1);
+                if (gdb_vcont) {
+                        static const char cmd[] = "vCont;c";
+                        gdb_send(gdb, cmd, sizeof(cmd) - 1);
+                } else {
+                        static const char cmd[] = "c";
+                        gdb_send(gdb, cmd, sizeof(cmd) - 1);
+                }
         }
         return true;
 }
