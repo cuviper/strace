@@ -275,10 +275,14 @@ gdb_init()
 {
         gdb_signal_map_init();
 
-        // FIXME error checking...
-        const char *node = strtok(gdbserver, ":");
-        const char *service = strtok(NULL, "");
-        gdb = gdb_begin_tcp(node, service);
+        if (gdbserver[0] == '|')
+                gdb = gdb_begin_command(gdbserver + 1);
+        else if (strchr(gdbserver, ':') && !strchr(gdbserver, '/')) {
+                const char *node = strtok(gdbserver, ":");
+                const char *service = strtok(NULL, "");
+                gdb = gdb_begin_tcp(node, service);
+        } else
+                gdb = gdb_begin_path(gdbserver);
 
         if (!gdb_start_noack(gdb))
                 error_msg("couldn't enable gdb noack mode");
