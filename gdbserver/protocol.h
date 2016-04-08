@@ -39,7 +39,9 @@ uint64_t gdb_decode_hex_n(const char *bytes, size_t n);
 uint64_t gdb_decode_hex_str(const char *bytes);
 int gdb_decode_hex_buf(const char *bytes, size_t n, char *out);
 
+struct gdb_conn *gdb_begin_command(const char *command);
 struct gdb_conn *gdb_begin_tcp(const char *node, const char *service);
+struct gdb_conn *gdb_begin_path(const char *path);
 
 void gdb_end(struct gdb_conn *conn);
 
