@@ -31,6 +31,7 @@
 #include <err.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -202,6 +203,10 @@ gdb_begin_command(const char *command)
     // Cleanup.
     if ((ret = posix_spawn_file_actions_destroy(&file_actions)))
         errx(1, "posix_spawn_file_actions_destroy: %s", strerror(ret));
+    close(fds[1]);
+
+    // Avoid SIGPIPE when the command quits.
+    signal(SIGPIPE, SIG_IGN);
 
     // initialize the rest of gdb on this handle
     return gdb_begin(fds[0]);
