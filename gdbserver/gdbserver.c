@@ -331,7 +331,7 @@ gdb_init_syscalls()
 }
 
 static struct tcb*
-gdb_find_thread(int tid)
+gdb_find_thread(int tid, bool current)
 {
         if (tid < 0)
                 return NULL;
@@ -342,7 +342,17 @@ gdb_find_thread(int tid)
                 tcp = alloctcb(tid);
                 tcp->flags |= TCB_ATTACHED | TCB_STARTUP;
                 newoutf(tcp);
-                gdb_init_syscalls();
+
+                if (!current) {
+                        char cmd[] = "Hgxxxxxxxx";
+                        sprintf(cmd, "Hg%x", tid);
+                        gdb_send(gdb, cmd, strlen(cmd));
+                        current = gdb_ok();
+                        if (!current)
+                                error_msg("couldn't set gdb to thread %d", tid);
+                }
+                if (current)
+                        gdb_init_syscalls();
         }
         return tcp;
 }
@@ -367,7 +377,7 @@ gdb_enumerate_threads()
                         int pid, tid;
                         gdb_parse_thread(thread, &pid, &tid);
 
-                        struct tcb *tcp = gdb_find_thread(tid);
+                        struct tcb *tcp = gdb_find_thread(tid, false);
                         if (tcp && !current_tcp)
                                 current_tcp = tcp;
                 }
@@ -559,7 +569,7 @@ gdb_trace()
 
         if (gdb_multiprocess) {
                 tid = stop.tid;
-                tcp = gdb_find_thread(tid);
+                tcp = gdb_find_thread(tid, true);
 
                 /* Set current output file */
                 current_tcp = tcp;
