@@ -51,6 +51,10 @@ char *gdb_recv(struct gdb_conn *conn, /* out */ size_t *size);
 
 bool gdb_start_noack(struct gdb_conn *conn);
 
+void gdb_set_non_stop(struct gdb_conn *conn);
+
+bool gdb_has_non_stop(struct gdb_conn *conn);
+
 /* Read complete qXfer data, returned as binary with the size.
  * On error, returns NULL with size set to the error code.  */
 char *gdb_xfer_read(struct gdb_conn *conn,
