@@ -86,6 +86,16 @@ struct gdb_stop_reply {
         int tid; // thread id, aka kernel tid
 };
 
+static bool
+gdb_ok()
+{
+        size_t size;
+        char *reply = gdb_recv(gdb, &size);
+        bool ok = size == 2 && !strcmp(reply, "OK");
+        free(reply);
+        return ok;
+}
+
 static int
 gdb_map_signal(unsigned int gdb_sig) {
         /* strace "SIG_0" vs. gdb "0" -- it's all zero */
@@ -247,6 +257,25 @@ gdb_recv_stop()
 
         stop.reply = gdb_recv(gdb, &stop.size);
 
+	if (gdb_has_non_stop(gdb))
+	  {
+	    /* non-stop packet order:
+	       client sends: $vCont;c
+	       server sends: OK
+	       server sends: %Stop:T05syscall_entry (possibly out of order)
+	       client sends: $vStopped
+	       server sends: OK
+	    */
+	    if (strstr (stop.reply, "OK"))
+	      stop.reply = gdb_recv(gdb, &stop.size);
+	    /* In the off chance we had two OK in a row then try again */
+	    if (strstr (stop.reply, "OK"))
+	      stop.reply = gdb_recv(gdb, &stop.size);
+	    gdb_send(gdb,"vStopped",8);
+	    if (!gdb_ok())	/* TODO error? */
+	      printf("Did not get non stop mode ack\n");
+	  }
+
         // all good packets are at least 3 bytes
         switch (stop.size >= 3 ? stop.reply[0] : 0) {
                 case 'E':
@@ -269,16 +298,6 @@ gdb_recv_stop()
         return stop;
 }
 
-static bool
-gdb_ok()
-{
-        size_t size;
-        char *reply = gdb_recv(gdb, &size);
-        bool ok = size == 2 && !strcmp(reply, "OK");
-        free(reply);
-        return ok;
-}
-
 void
 gdb_init()
 {
@@ -293,6 +312,14 @@ gdb_init()
         } else
                 gdb = gdb_begin_path(gdbserver);
 
+	if (gdb_options)
+	  {
+	    // bike shed topic: current option is -g 'set non-stop on'
+	    // TODO do this automatically with gdbserver cooperation
+	    if (strstr(gdb_options, "non-stop"))
+	      gdb_set_non_stop(gdb);
+	  }
+	
         if (!gdb_start_noack(gdb))
                 error_msg("couldn't enable gdb noack mode");
 
@@ -319,6 +346,14 @@ gdb_init()
         if (!gdb_vcont)
                 error_msg("gdb server doesn't support vCont");
         free(reply);
+
+	if (gdb_has_non_stop(gdb))
+	  {
+	    static const char nonstop_cmd[] = "QNonStop:1";
+	    gdb_send(gdb, nonstop_cmd, sizeof(nonstop_cmd) - 1);
+	    if (!gdb_ok())
+	      error_msg("couldn't enable gdb nonstop mode");
+	  }
 }
 
 static void
@@ -493,25 +528,47 @@ gdb_startup_attach(struct tcb *tcp)
         char cmd[] = "vAttach;XXXXXXXX";
         sprintf(cmd, "vAttach;%x", tcp->pid);
         gdb_send(gdb, cmd, strlen(cmd));
+        struct gdb_stop_reply stop;
 
-        struct gdb_stop_reply stop = gdb_recv_stop();
-        if (stop.size == 0)
-                error_msg_and_die("gdb server doesn't support vAttach!");
-        switch (stop.type) {
-                case gdb_stop_error:
-                        error_msg_and_die("gdb server failed vAttach with %.*s",
-                                        (int)stop.size, stop.reply);
-                case gdb_stop_trap:
-                        break;
-                case gdb_stop_signal:
-                        if (stop.code == 0)
-                                break;
-                        // fallthrough
-                default:
-                        error_msg_and_die("gdb server expected vAttach trap, got: %.*s",
-                                        (int)stop.size, stop.reply);
-        }
-
+	if (! gdb_has_non_stop(gdb))
+	  {
+	    stop = gdb_recv_stop();
+	    if (stop.size == 0)
+	      error_msg_and_die("gdb server doesn't support vAttach!");
+	    switch (stop.type) {
+	    case gdb_stop_error:
+	      error_msg_and_die("gdb server failed vAttach with %.*s",
+				(int)stop.size, stop.reply);
+	    case gdb_stop_trap:
+	      break;
+	    case gdb_stop_signal:
+	      if (stop.code == 0)
+		break;
+	      // fallthrough
+	    default:
+	      error_msg_and_die("gdb server expected vAttach trap, got: %.*s",
+				(int)stop.size, stop.reply);
+	    }
+	  }
+	else
+	  {
+	    /*
+	      non-stop packet order:
+	      client sends: vCont;t
+	      server sends: OK
+	      server sends: Stop:T05swbreak:;
+	      client sends: vStopped
+	      server sends: OK
+	     */
+	    char cmd[] = "vCont;t:pXXXXXXXX";
+	    sprintf(cmd, "vCont;t:p%x.-1", tcp->pid);
+	    if (!gdb_ok())
+                error_msg("gdb server failed to attach %d", tcp->pid);
+	    gdb_send(gdb, cmd, strlen(cmd));
+	    stop = gdb_recv_stop();
+	  }
+	
+	//	gdb_set_non_stop(gdb);
         pid_t tid = stop.tid;
         free(stop.reply);
 

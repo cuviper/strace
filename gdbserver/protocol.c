@@ -50,11 +50,13 @@
 
 
 #include "protocol.h"
+#include "defs.h"
 
 struct gdb_conn {
     FILE *in;
     FILE *out;
     bool ack;
+    bool non_stop;
 };
 
 
@@ -306,6 +308,8 @@ send_packet(FILE *out, const char *command, size_t size)
     // gdbserver.  e.g. giving "invalid hex digit" on an RLE'd address.
     // So just write raw here, and maybe let higher levels escape/RLE.
 
+    if (debug_flag)
+      printf("\t##### putpkt $%s\n", command);
     fputc('$', out); // packet start
     fwrite(command, 1, size, out); // payload
     fprintf(out, "#%02x", sum); // packet end, checksum
@@ -347,7 +351,9 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
     bool escape = false;
 
     // fast-forward to the first start of packet
-    while ((c = fgetc_unlocked(in)) != EOF && c != '$');
+    while ((c = fgetc_unlocked(in)) != EOF && (c != '$' && c != '%'));
+    if (c == '%')
+      ungetc (c, in);
 
     while ((c = fgetc_unlocked(in)) != EOF) {
         sum += (uint8_t)c;
@@ -357,7 +363,23 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
                 sum = 0;
                 escape = false;
                 continue;
+	    case '%': 
+	      {
+		char pcr[6];
+		int idx = 0;
 
+                i = 0;
+                sum = 0;
+                escape = false;
+		for (idx = 0; idx < 5; idx++)
+		  {
+		    pcr[idx] = fgetc_unlocked(in);
+		    sum += (uint8_t)pcr[idx];
+		  }
+		if (strncmp(pcr, "Stop:", 5) == 0)
+		  continue;
+		errx (1,"unknown non stop packet");
+	      }
             case '#': // end of packet
                 sum -= c; // not part of the checksum
                 {
@@ -375,6 +397,8 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
                 }
                 reply[i] = '\0';
 
+		if (debug_flag)
+		  printf("\t##### getpkt %.80s\n", reply);
                 return reply;
 
             case '}': // escape: next char is XOR 0x20
@@ -472,6 +496,18 @@ gdb_start_noack(struct gdb_conn *conn)
     if (ok)
         conn->ack = false;
     return ok ? "OK" : "";
+}
+
+void
+gdb_set_non_stop(struct gdb_conn *conn)
+{
+    conn->non_stop = true;
+}
+
+bool
+gdb_has_non_stop(struct gdb_conn *conn)
+{
+  return conn->non_stop;
 }
 
 /* Read complete qXfer data, returned as binary with the size.
