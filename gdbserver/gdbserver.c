@@ -538,8 +538,15 @@ gdb_detach(struct tcb *tcp)
                 gdb_send(gdb, cmd, sizeof(cmd) - 1);
         }
 
-        if (!gdb_ok())
-                error_msg("gdb server failed to detach %d", tcp->pid);
+        if (!gdb_ok()) {
+                // is it still alive?
+                char cmd[] = "T;XXXXXXXX";
+                sprintf(cmd, "T;%x", tcp->pid);
+                gdb_send(gdb, cmd, strlen(cmd));
+                if (gdb_ok())
+                        error_msg("gdb server failed to detach %d", tcp->pid);
+                // otherwise it's dead, or already detached, fine.
+        }
 }
 
 // Returns true iff the main trace loop has to continue.
