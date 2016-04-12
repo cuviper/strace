@@ -422,13 +422,14 @@ gdb_recv(struct gdb_conn *conn, size_t *size)
     do {
         reply = recv_packet(conn->in, size, &acked);
 
-        if (!conn->ack)
-            break;
-
-        // send +/- depending on checksum result, retry if needed
-        fputc(acked ? '+' : '-', conn->out);
-        fflush(conn->out);
-    } while (!acked);
+        if (conn->ack) {
+            // send +/- depending on checksum result, retry if needed
+            fputc(acked ? '+' : '-', conn->out);
+            fflush(conn->out);
+            if (!acked)
+                free(reply);
+        }
+    } while (conn->ack && !acked);
 
     return reply;
 }
