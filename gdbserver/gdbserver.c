@@ -372,7 +372,8 @@ gdb_enumerate_threads()
         size_t size;
         char *reply = gdb_recv(gdb, &size);
         while (reply[0] == 'm') {
-                for (char *thread = strtok(reply + 1, ","); thread;
+                char *thread;
+                for (thread = strtok(reply + 1, ","); thread;
                                 thread = strtok(NULL, "")) {
                         int pid, tid;
                         gdb_parse_thread(thread, &pid, &tid);
@@ -572,7 +573,7 @@ gdb_trace()
         }
 
         pid_t tid = -1;
-	struct tcb *tcp;
+        struct tcb *tcp = NULL;
 
         if (gdb_multiprocess) {
                 tid = stop.tid;
@@ -754,4 +755,19 @@ gdb_read_mem(pid_t tid, long addr, unsigned int len, bool check_nil, char *out)
         }
 
         return 0;
+}
+
+int
+gdb_getfdpath(pid_t tid, int fd, char *buf, unsigned bufsize)
+{
+        if (!gdb || fd < 0)
+                return -1;
+
+        /*
+         * As long as we assume a Linux target, we can peek at their procfs
+         * just like normal getfdpath does.  Maybe that won't always be true.
+         */
+        char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int)*3];
+        sprintf(linkpath, "/proc/%u/fd/%u", tid, fd);
+        return gdb_readlink(gdb, linkpath, buf, bufsize);
 }

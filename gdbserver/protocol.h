@@ -56,3 +56,6 @@ bool gdb_start_noack(struct gdb_conn *conn);
 char *gdb_xfer_read(struct gdb_conn *conn,
         const char *object, const char *annex,
         /* out */ size_t *size);
+
+int gdb_readlink(struct gdb_conn *conn, const char *linkpath,
+        char *buf, unsigned bufsize);
