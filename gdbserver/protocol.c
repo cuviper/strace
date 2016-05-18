@@ -58,13 +58,29 @@ struct gdb_conn {
 };
 
 
-void gdb_encode_hex(uint8_t byte, char* out) {
+void
+gdb_encode_hex(uint8_t byte, char* out) {
     static const char value_hex[16] = {
         '0', '1', '2', '3', '4', '5', '6', '7',
         '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
     };
     *out++ = value_hex[byte >> 4];
     *out++ = value_hex[byte & 0xf];
+}
+
+char *
+gdb_encode_hex_string(const char *str)
+{
+    char *out = malloc(2 * strlen(str) + 1);
+    if (out) {
+        char *out_ptr = out;
+        while (*str) {
+            gdb_encode_hex(*str++, out_ptr);
+            out_ptr += 2;
+        }
+        *out_ptr = '\0';
+    }
+    return out;
 }
 
 static inline uint8_t
@@ -113,6 +129,13 @@ uint64_t gdb_decode_hex_str(const char *bytes)
         value = 16 * value + nibble;
     }
     return value;
+}
+
+int64_t gdb_decode_signed_hex_str(const char *bytes)
+{
+    return (*bytes == '-')
+        ? -(int64_t)gdb_decode_hex_str(bytes + 1)
+        : (int64_t)gdb_decode_hex_str(bytes);
 }
 
 int gdb_decode_hex_buf(const char *bytes, size_t n, char *out)
@@ -227,7 +250,8 @@ gdb_begin_tcp(const char *node, const char *service)
         errx(1, "getaddrinfo: %s", gai_strerror(s));
 
     int fd = -1;
-    for (struct addrinfo *ai = result; ai; ai = ai->ai_next) {
+    struct addrinfo *ai;
+    for (ai = result; ai; ai = ai->ai_next) {
         // open the socket and start the tcp connection
         fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (fd < 0)
@@ -497,4 +521,71 @@ gdb_xfer_read(struct gdb_conn *conn,
     free(data);
     *ret_size = error;
     return NULL;
+}
+
+
+struct vfile_response {
+    char *reply;
+    int64_t result;
+    int64_t errnum; // avoid 'errno' macros
+    size_t attachment_size;
+    const char *attachment;
+};
+
+static struct vfile_response
+gdb_vfile(struct gdb_conn *conn, const char *operation, const char *parameters)
+{
+    struct vfile_response res = { NULL, -1, 0, 0, NULL };
+
+    char *cmd;
+    int cmd_size = asprintf(&cmd, "vFile:%s:%s", operation, parameters);
+    if (cmd_size < 0) {
+        return res;
+    }
+
+    gdb_send(conn, cmd, strlen(cmd));
+    free(cmd);
+
+    size_t size;
+    res.reply = gdb_recv(conn, &size);
+    if (size > 1 && res.reply[0] == 'F') {
+        // F result [, errno] [; attachment]
+        res.result = gdb_decode_signed_hex_str(res.reply + 1);
+
+        const char *attachment = memchr(res.reply, ';', size);
+        if (attachment) {
+            res.attachment = attachment + 1;
+            res.attachment_size = size - (res.attachment - res.reply);
+        }
+
+        const char *errnum = memchr(res.reply, ',', size - res.attachment_size);
+        if (errnum)
+            res.errnum = gdb_decode_signed_hex_str(errnum + 1);
+    }
+    return res;
+}
+
+int
+gdb_readlink(struct gdb_conn *conn, const char *linkpath,
+        char *buf, unsigned bufsize)
+{
+    char *parameters = gdb_encode_hex_string(linkpath);
+    if (!parameters)
+        return -1;
+
+    struct vfile_response res = gdb_vfile(conn, "readlink", parameters);
+    free(parameters);
+
+    int ret = -1;
+    if (res.result >= 0 && res.attachment != NULL
+            && res.result == (int64_t)res.attachment_size) {
+        size_t data_len = res.attachment_size;
+        if (data_len >= bufsize)
+            data_len = bufsize - 1; // truncate -- ok?
+        memcpy(buf, res.attachment, data_len);
+        buf[data_len] = 0;
+        ret = data_len;
+    }
+    free(res.reply);
+    return ret;
 }
