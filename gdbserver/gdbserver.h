@@ -30,7 +30,6 @@
 #include "protocol.h"
 
 char* gdbserver;
-char* gdb_options;
 
 void gdb_init(void);
 void gdb_finalize_init(void);
