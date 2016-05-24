@@ -51,7 +51,7 @@ char *gdb_recv(struct gdb_conn *conn, /* out */ size_t *size);
 
 bool gdb_start_noack(struct gdb_conn *conn);
 
-void gdb_set_non_stop(struct gdb_conn *conn);
+void gdb_set_non_stop(struct gdb_conn *conn, bool val);
 
 bool gdb_has_non_stop(struct gdb_conn *conn);
 

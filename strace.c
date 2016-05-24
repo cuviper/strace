@@ -1595,7 +1595,6 @@ init(int argc, char *argv[])
 
 	os_release = get_os_release();
 
-	gdb_options = NULL;
 	shared_log = stderr;
 	set_sortby(DEFAULT_SORTBY);
 	set_personality(DEFAULT_PERSONALITY);
@@ -1612,7 +1611,6 @@ init(int argc, char *argv[])
 		"k"
 #endif
 		"D"
-		"g:"
 		"G:"
 		"a:e:o:O:p:s:S:u:E:P:I:")) != EOF) {
 		switch (c) {
@@ -1645,9 +1643,6 @@ init(int argc, char *argv[])
 			break;
 		case 'f':
 			followfork++;
-			break;
-		case 'g':
-			gdb_options = strdup(optarg);
 			break;
 		case 'G':
 			gdbserver = strdup(optarg);

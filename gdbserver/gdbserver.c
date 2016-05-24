@@ -311,14 +311,6 @@ gdb_init()
                 gdb = gdb_begin_tcp(node, service);
         } else
                 gdb = gdb_begin_path(gdbserver);
-
-	if (gdb_options)
-	  {
-	    // bike shed topic: current option is -g 'set non-stop on'
-	    // TODO do this automatically with gdbserver cooperation
-	    if (strstr(gdb_options, "non-stop"))
-	      gdb_set_non_stop(gdb);
-	  }
 	
         if (!gdb_start_noack(gdb))
                 error_msg("couldn't enable gdb noack mode");
@@ -346,14 +338,6 @@ gdb_init()
         if (!gdb_vcont)
                 error_msg("gdb server doesn't support vCont");
         free(reply);
-
-	if (gdb_has_non_stop(gdb))
-	  {
-	    static const char nonstop_cmd[] = "QNonStop:1";
-	    gdb_send(gdb, nonstop_cmd, sizeof(nonstop_cmd) - 1);
-	    if (!gdb_ok())
-	      error_msg("couldn't enable gdb nonstop mode");
-	  }
 }
 
 static void
@@ -525,50 +509,61 @@ gdb_startup_attach(struct tcb *tcp)
         if (!gdb_extended)
                 error_msg_and_die("gdb server doesn't support attaching processes!");
 
-        char cmd[] = "vAttach;XXXXXXXX";
-        sprintf(cmd, "vAttach;%x", tcp->pid);
-        gdb_send(gdb, cmd, strlen(cmd));
+        char attach_cmd[] = "vAttach;XXXXXXXX";
         struct gdb_stop_reply stop;
+	static const char nonstop_cmd[] = "QNonStop:1";
 
-	if (! gdb_has_non_stop(gdb))
-	  {
-	    stop = gdb_recv_stop();
-	    if (stop.size == 0)
-	      error_msg_and_die("gdb server doesn't support vAttach!");
-	    switch (stop.type) {
-	    case gdb_stop_error:
-	      error_msg_and_die("gdb server failed vAttach with %.*s",
-				(int)stop.size, stop.reply);
-	    case gdb_stop_trap:
-	      break;
-	    case gdb_stop_signal:
-	      if (stop.code == 0)
-		break;
-	      // fallthrough
-	    default:
-	      error_msg_and_die("gdb server expected vAttach trap, got: %.*s",
-				(int)stop.size, stop.reply);
+	gdb_send(gdb, nonstop_cmd, sizeof(nonstop_cmd) - 1);
+	if (gdb_ok())
+	       gdb_set_non_stop(gdb, true);
+
+        sprintf(attach_cmd, "vAttach;%x", tcp->pid);
+        gdb_send(gdb, attach_cmd, strlen(attach_cmd));
+
+	do {
+		/*
+		  non-stop packet order:
+		  client sends: vCont;t
+		  server sends: OK
+		  server sends: Stop:T05swbreak:;
+		  client sends: vStopped
+		  server sends: OK
+		*/
+		char cmd[] = "vCont;t:pXXXXXXXX";
+		sprintf(cmd, "vCont;t:p%x.-1", tcp->pid);
+		if (!gdb_ok())
+			break;
+		gdb_send(gdb, cmd, strlen(cmd));
+		stop = gdb_recv_stop();
+	} while (0);
+	
+	if (stop.type == gdb_stop_unknown) {
+		static const char nonstop_cmd[] = "QNonStop:0";
+		gdb_send(gdb, nonstop_cmd, sizeof(nonstop_cmd) - 1);
+		if (gdb_ok())
+			gdb_set_non_stop(gdb, false);
+		else
+			error_msg_and_die("gdb server doesn't support vAttach!");
+		gdb_send(gdb, attach_cmd, strlen(attach_cmd));
+		stop = gdb_recv_stop();
+		if (stop.size == 0)
+			error_msg_and_die("gdb server doesn't support vAttach!");
+		switch (stop.type) {
+		case gdb_stop_error:
+			error_msg_and_die("gdb server failed vAttach with %.*s",
+					  (int)stop.size, stop.reply);
+		case gdb_stop_trap:
+			break;
+		case gdb_stop_signal:
+			if (stop.code == 0)
+				break;
+			// fallthrough
+		default:
+			error_msg_and_die("gdb server expected vAttach trap, got: %.*s",
+					  (int)stop.size, stop.reply);
 	    }
 	  }
-	else
-	  {
-	    /*
-	      non-stop packet order:
-	      client sends: vCont;t
-	      server sends: OK
-	      server sends: Stop:T05swbreak:;
-	      client sends: vStopped
-	      server sends: OK
-	     */
-	    char cmd[] = "vCont;t:pXXXXXXXX";
-	    sprintf(cmd, "vCont;t:p%x.-1", tcp->pid);
-	    if (!gdb_ok())
-                error_msg("gdb server failed to attach %d", tcp->pid);
-	    gdb_send(gdb, cmd, strlen(cmd));
-	    stop = gdb_recv_stop();
-	  }
-	
-	//	gdb_set_non_stop(gdb);
+
         pid_t tid = stop.tid;
         free(stop.reply);
 
@@ -581,7 +576,8 @@ gdb_startup_attach(struct tcb *tcp)
         gdb_init_syscalls();
 
         if (!qflag)
-                fprintf(stderr, "Process %u attached\n", tcp->pid);
+		fprintf(stderr, "Process %u attached in %s mode\n", tcp->pid,
+			gdb_has_non_stop (gdb) ? "non-stop" : "all-stop");
 }
 
 void

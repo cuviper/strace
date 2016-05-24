@@ -309,7 +309,7 @@ send_packet(FILE *out, const char *command, size_t size)
     // So just write raw here, and maybe let higher levels escape/RLE.
 
     if (debug_flag)
-      printf("\t##### putpkt $%s\n", command);
+      printf("\tSending packet: $%s\n", command);
     fputc('$', out); // packet start
     fwrite(command, 1, size, out); // payload
     fprintf(out, "#%02x", sum); // packet end, checksum
@@ -398,7 +398,7 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
                 reply[i] = '\0';
 
 		if (debug_flag)
-		  printf("\t##### getpkt %.80s\n", reply);
+		  printf("\tPacket received: %s\n", reply);
                 return reply;
 
             case '}': // escape: next char is XOR 0x20
@@ -499,9 +499,9 @@ gdb_start_noack(struct gdb_conn *conn)
 }
 
 void
-gdb_set_non_stop(struct gdb_conn *conn)
+gdb_set_non_stop(struct gdb_conn *conn, bool val)
 {
-    conn->non_stop = true;
+    conn->non_stop = val;
 }
 
 bool
