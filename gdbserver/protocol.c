@@ -59,6 +59,9 @@ struct gdb_conn {
     bool non_stop;
 };
 
+static char** notifications;
+static int notifications_size;
+
 
 void
 gdb_encode_hex(uint8_t byte, char* out) {
@@ -84,6 +87,7 @@ gdb_encode_hex_string(const char *str)
     }
     return out;
 }
+
 
 static inline uint8_t
 hex_nibble(uint8_t hex)
@@ -337,6 +341,78 @@ gdb_send(struct gdb_conn *conn, const char *command, size_t size)
 }
 
 
+/* push_notification/pop_notification caches notifications which
+   arrive via the following dialogue:
+   [ server: %Stop:T05syscall_entry...
+     client: $vStopped ]*
+     server: OK
+*/
+
+void
+push_notification(char *packet, size_t packet_size)
+{
+     int idx;
+
+     if (strncmp(packet+3, "syscall", 7) != 0)
+	 return;
+
+     if (notifications_size == 0) {
+	 notifications_size = 10;
+	 notifications = malloc(sizeof(void*) * notifications_size);
+	 memset(notifications, 0, sizeof(void*) * notifications_size);
+     }
+	  
+     while (true) {
+	 for (idx = 0; idx < notifications_size; idx++) {
+	     if (notifications[idx] == NULL)
+		  break;
+	 }
+	 if (idx == notifications_size) {
+	     notifications_size *= 2;
+	     notifications = realloc(notifications, sizeof(void*) * notifications_size);
+	 }
+	 else {
+	     notifications[idx] = malloc(packet_size);
+	     memcpy(notifications[idx], packet, packet_size);
+	     break;
+	 }
+     }
+}
+
+
+char*
+pop_notification(size_t *size)
+{
+     int idx;
+     char *notification;
+
+     for (idx = 0; idx < notifications_size; idx++) {
+	 if (notifications[idx] != NULL)
+	      break;
+     }
+
+     if (idx == notifications_size)
+	 return NULL;
+
+     notification = notifications[idx];
+     notifications[idx] = NULL;
+     *size = strlen(notification);
+     return notification;
+}
+
+
+void
+dump_notifications(char *packet, int pid, int tid)
+{
+     int idx;
+
+     for (idx = 0; idx < notifications_size; idx++) {
+	 if (notifications[idx] != NULL)
+	     printf ("Notify Dump: %s\n", notifications[idx]);
+     }
+}
+
+
 static char *
 recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
 {
@@ -366,6 +442,7 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
 	    case '%': 
 	      {
 		char pcr[6];
+
 		int idx = 0;
 
                 i = 0;
@@ -467,6 +544,7 @@ gdb_recv(struct gdb_conn *conn, size_t *size)
 {
     char *reply;
     bool acked = false;
+    
     do {
         reply = recv_packet(conn->in, size, &acked);
 
