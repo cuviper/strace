@@ -59,6 +59,7 @@ struct gdb_conn {
     bool non_stop;
 };
 
+// non-stop notifications (see gdb_recv_stop)
 static char** notifications;
 static int notifications_size;
 
@@ -386,6 +387,7 @@ pop_notification(size_t *size)
      int idx;
      char *notification;
 
+     *size = 0;
      for (idx = 0; idx < notifications_size; idx++) {
 	 if (notifications[idx] != NULL)
 	      break;
@@ -475,7 +477,7 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
                 reply[i] = '\0';
 
 		if (debug_flag)
-		  printf("\tPacket received: %s\n", reply);
+		    printf("\tPacket received: %s\n", reply);
                 return reply;
 
             case '}': // escape: next char is XOR 0x20
@@ -540,13 +542,23 @@ recv_packet(FILE *in, size_t *ret_size, bool* ret_sum_ok)
 }
 
 char *
-gdb_recv(struct gdb_conn *conn, size_t *size)
+gdb_recv(struct gdb_conn *conn, size_t *size, bool want_stop)
 {
     char *reply;
     bool acked = false;
     
     do {
         reply = recv_packet(conn->in, size, &acked);
+
+	/* (See gdb_recv_stop for non-stop packet order) 
+	   If a notification arrived while expecting another packet 
+	   type, then cache the notification. */
+	if (! want_stop && strncmp (reply, "T05syscall", 10) == 0) {
+	    push_notification(reply, *size);
+	    if (debug_flag)
+	        printf ("Pushed %s\n", reply);
+	    reply = recv_packet(conn->in, size, &acked);
+	  }
 
         if (conn->ack) {
             // send +/- depending on checksum result, retry if needed
@@ -567,7 +579,7 @@ gdb_start_noack(struct gdb_conn *conn)
     gdb_send(conn, cmd, sizeof(cmd) - 1);
 
     size_t size;
-    char *reply = gdb_recv(conn, &size);
+    char *reply = gdb_recv(conn, &size, false);
     bool ok = size == 2 && !strcmp(reply, "OK");
     free(reply);
 
@@ -610,7 +622,7 @@ gdb_xfer_read(struct gdb_conn *conn,
         free(cmd);
 
         size_t size;
-        char *reply = gdb_recv(conn, &size);
+        char *reply = gdb_recv(conn, &size, false);
         char c = reply[0];
         switch (c) {
             case 'm':
@@ -661,7 +673,7 @@ gdb_vfile(struct gdb_conn *conn, const char *operation, const char *parameters)
     free(cmd);
 
     size_t size;
-    res.reply = gdb_recv(conn, &size);
+    res.reply = gdb_recv(conn, &size, false);
     if (size > 1 && res.reply[0] == 'F') {
         // F result [, errno] [; attachment]
         res.result = gdb_decode_signed_hex_str(res.reply + 1);

@@ -90,7 +90,7 @@ static bool
 gdb_ok()
 {
         size_t size;
-        char *reply = gdb_recv(gdb, &size);
+        char *reply = gdb_recv(gdb, &size, false);
         bool ok = size == 2 && !strcmp(reply, "OK");
         free(reply);
         return ok;
@@ -254,12 +254,15 @@ gdb_recv_stop(struct gdb_stop_reply *stop_reply)
                 .pid = -1,
                 .tid = -1,
         };
+	char *reply = NULL;
+	size_t stop_size;
+
 
 	if (stop_reply)
 	    // pop_notification gave us a cached notification
 	    stop = *stop_reply;
 	else 
-	    stop.reply = gdb_recv(gdb, &stop.size);
+	    stop.reply = gdb_recv(gdb, &stop.size, true);
 
 	if  (gdb_has_non_stop(gdb) && !stop_reply) {
 	    /* non-stop packet order:
@@ -267,24 +270,36 @@ gdb_recv_stop(struct gdb_stop_reply *stop_reply)
 	       server sends: OK
 	       server sends: %Stop:T05syscall_entry (possibly out of order)
 	       client sends: $vStopped
-	       server possibly sends 1 or more: T05syscall_entry
+	       server possibly sends 0 or more: T05syscall_entry
 	       client sends to each: $vStopped
 	       server sends: OK
 	    */
+	     /* Do we have an out of order notification?  (see gdb_recv) */
+	     reply = pop_notification(&stop_size);
+	     if (reply) {
+		  if (debug_flag)
+		       printf ("popped %s\n", reply);
+		  stop.reply = reply;
+		  reply = gdb_recv(gdb, &stop_size, false); /* vContc OK */
+	     }
+	     else {
+		  if (stop.reply[0] == 'T') {
+		       reply = gdb_recv(gdb, &stop_size, false); /* vContc OK */
+		  }
+		  else {
+		       while (stop.reply[0] != 'T') 
+			    stop.reply = gdb_recv(gdb, &stop.size, true);
+		  }
+	     }
 
-	    if (strcmp (stop.reply, "OK") == 0) {
-		stop.reply = gdb_recv(gdb, &stop.size);
-		if (strcmp (stop.reply, "OK") == 0)
-		    stop.reply = gdb_recv(gdb, &stop.size);
-		if (stop.reply[0] == 'T')
+	     if (stop.reply[0] == 'T') {
 		    do {
-			char *this_reply;
 			size_t this_size;
 			gdb_send(gdb,"vStopped",8);
-			this_reply = gdb_recv(gdb, &this_size);
-			if (strcmp (this_reply, "OK") == 0)
+			reply = gdb_recv(gdb, &this_size, true);
+			if (strcmp (reply, "OK") == 0)
 			    break;
-			push_notification(this_reply, this_size);
+			push_notification(reply, this_size);
 		    } while (true);
 	    }
 	} // gdb_has_non_stop
@@ -332,7 +347,7 @@ gdb_init()
         gdb_send(gdb, multi_cmd, sizeof(multi_cmd) - 1);
 
         size_t size;
-        char *reply = gdb_recv(gdb, &size);
+        char *reply = gdb_recv(gdb, &size, false);
         gdb_multiprocess = strstr(reply, "multiprocess+") != NULL;
         if (!gdb_multiprocess)
                 error_msg("couldn't enable gdb multiprocess mode");
@@ -346,7 +361,7 @@ gdb_init()
 
         static const char vcont_cmd[] = "vCont?";
         gdb_send(gdb, vcont_cmd, sizeof(vcont_cmd) - 1);
-        reply = gdb_recv(gdb, &size);
+        reply = gdb_recv(gdb, &size, false);
         gdb_vcont = strncmp(reply, "vCont", 5) == 0;
         if (!gdb_vcont)
                 error_msg("gdb server doesn't support vCont");
@@ -402,7 +417,7 @@ gdb_enumerate_threads()
         gdb_send(gdb, qfcmd, sizeof(qfcmd) - 1);
 
         size_t size;
-        char *reply = gdb_recv(gdb, &size);
+        char *reply = gdb_recv(gdb, &size, false);
         while (reply[0] == 'm') {
                 char *thread;
                 for (thread = strtok(reply + 1, ","); thread;
@@ -419,7 +434,7 @@ gdb_enumerate_threads()
 
                 static const char qscmd[] = "qsThreadInfo";
                 gdb_send(gdb, qscmd, sizeof(qscmd) - 1);
-                reply = gdb_recv(gdb, &size);
+                reply = gdb_recv(gdb, &size, false);
         }
 
         free(reply);
@@ -544,8 +559,10 @@ gdb_startup_attach(struct tcb *tcp)
 		*/
 		char cmd[] = "vCont;t:pXXXXXXXX";
 		sprintf(cmd, "vCont;t:p%x.-1", tcp->pid);
-		if (!gdb_ok())
-			break;
+		if (!gdb_ok()) {
+                        stop.type = gdb_stop_unknown;
+                        break;
+		}
 		gdb_send(gdb, cmd, strlen(cmd));
 		stop = gdb_recv_stop(NULL);
 	} while (0);
@@ -753,7 +770,7 @@ gdb_trace()
 
                 free(stop.reply);
                 stop.reply = pop_notification(&stop.size);
-                if (stop.reply)
+                if (stop.reply) // cached out of order notification?
                         stop = gdb_recv_stop(&stop);
                 else
                         break;
@@ -793,7 +810,7 @@ gdb_get_regs(pid_t tid, size_t *size)
         /* NB: this assumes gdbserver's current thread is also tid.  If that
          * may not be the case, we should send "HgTID" first, and restore.  */
         gdb_send(gdb, "g", 1);
-        return gdb_recv(gdb, size);
+        return gdb_recv(gdb, size, false);
 }
 
 int
@@ -813,7 +830,7 @@ gdb_read_mem(pid_t tid, long addr, unsigned int len, bool check_nil, char *out)
                 gdb_send(gdb, cmd, strlen(cmd));
 
                 size_t size;
-                char *reply = gdb_recv(gdb, &size);
+                char *reply = gdb_recv(gdb, &size, false);
                 if (size < 2 || reply[0] == 'E' || size > len * 2
                     || gdb_decode_hex_buf(reply, size, out) < 0) {
                         errno = EINVAL;
