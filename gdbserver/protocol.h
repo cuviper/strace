@@ -47,7 +47,7 @@ void gdb_end(struct gdb_conn *conn);
 
 void gdb_send(struct gdb_conn *conn, const char *command, size_t size);
 
-char *gdb_recv(struct gdb_conn *conn, /* out */ size_t *size);
+char *gdb_recv(struct gdb_conn *conn, /* out */ size_t *size, bool want_stop);
 
 bool gdb_start_noack(struct gdb_conn *conn);
 
